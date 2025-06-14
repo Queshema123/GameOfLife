@@ -1,40 +1,34 @@
 #ifndef __GAME__
 #define __GAME__
 
-#include <vector>
-#include <functional>
-#include <bitset>
-
-#include "game_field.h"
-#include "cell.h"
-
+#include <array>
+#include <unordered_set>
+#include <SDL.h>
 
 class Game
 {
-    std::vector<std::pair<int, int>> alive_cells_pos;
-    std::vector<std::vector<Cell>> cells;
-    GameField field;
-
+    std::array<int, 8> neighbor_offsets;
+    std::unordered_set<std::size_t> alive_ceils;              
+    
     bool isPaused;
     int game_speed;
-    int max_row_cell_pos, max_col_cell_pos;
+    int ROWS, COLS;
+    int ceil_size;
+    int width, height;
 
     SDL_Renderer* renderer;
     SDL_Window* window;
+
+    void initOffsets();
 protected:
     bool initGUI(int w, int h);
-    void createCells(int w, int h, int size);
     void processKeyboardEvents(const SDL_Event& event);
-    void setCellState(const std::pair<int, int> &pos, bool alive);
-    void addActiveCell(const std::pair<int, int> &pos);
-    void delActiveCell(const std::pair<int, int> &pos);
 public:
     Game(int w, int h, int cell_size, int speed);
     ~Game();
-
-    bool isAliveCell(const std::pair<size_t, size_t>& pos, const std::vector<std::pair<int, int>>& neighbors); // Check cells game logic
-    std::vector<std::pair<int, int>> getNeighborsPos(const std::pair<int, int> &pos);
     
+    void drawField(SDL_Renderer *renderer, int width, int height, int ceil_size);
+    void drawAliveCeils(SDL_Renderer *renderer, int width, int height, int ceil_size);
     void updateCellsStates(); // Update active_cells and their neighbor states
     void changeCellState(int x, int y, bool state); // Make dead or alive cell by coords
     void draw(); // Draw field and cells

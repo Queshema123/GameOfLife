@@ -1,15 +1,30 @@
 #include "game.h"
 #include <iostream>
-#include <algorithm>
+#include <unordered_map>
 #include <SDL.h>
 
-Game::Game(int w, int h, int cell_size, int speed) : field{w, h, cell_size, {255, 0, 0}}, isPaused{false}, game_speed{speed}, 
-    window{nullptr}, renderer{nullptr}, max_row_cell_pos{0}, max_col_cell_pos{0}
+Game::Game(int w, int h, int cell_size, int speed) : ceil_size{cell_size}, width{w}, height{h},
+    isPaused{false}, game_speed{speed}, window{nullptr}, renderer{nullptr}, COLS{w/cell_size},
+    ROWS{h/cell_size}
 { 
     if( !initGUI(w, h) )
         throw std::runtime_error("Can't initialize GUI");
 
-    createCells(w, h, cell_size);
+    initOffsets();
+}
+
+void Game::initOffsets()
+{
+    neighbor_offsets = {
+            -COLS - 1,
+            -COLS,
+            -COLS + 1,
+            -1,
+            1,
+            COLS - 1,
+            COLS,
+            COLS + 1
+    };
 }
 
 bool Game::initGUI(int w, int h)
@@ -32,25 +47,6 @@ bool Game::initGUI(int w, int h)
         return false;
     }
     return true;
-}
-
-void Game::createCells(int w, int h, int size)
-{
-    int rows{ w / size };
-    int cols{ h / size };
-    max_row_cell_pos = rows;
-    max_col_cell_pos = cols;
-
-    cells.reserve(rows);
-    for(int i{0}; i < rows; ++i)
-    {
-        std::vector<Cell> tmp;
-        tmp.reserve(cols);
-        for(int j{0}; j < cols; ++j)
-            tmp.push_back(Cell(i*size, j*size, size, size));
-        
-        cells.push_back(std::move(tmp));
-    }
 }
 
 void Game::processKeyboardEvents(const SDL_Event& event)
@@ -82,17 +78,50 @@ bool Game::loop()
         }
     }
 
-    SDL_RenderPresent(renderer);
     return true;
 }
 
-void Game::draw()
-{   
-    for(int i{0}; i < cells.size(); ++i)
-        for(int j{0}; j < cells[i].size(); ++j)
-            cells[i][j].draw(renderer);
+void Game::drawField(SDL_Renderer *renderer, int width, int height, int ceil_size)
+{
+    SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Red color for lines
 
-    field.draw(renderer);
+    int rows{height / ceil_size};
+    for(int i = 0; i < rows; ++i)
+        SDL_RenderDrawLine(renderer,  0, i*ceil_size, width, i*ceil_size); // Draw horizontal lines with step cell_size
+
+    int cols{width / ceil_size};
+    for(int i = 0; i < cols; ++i)
+        SDL_RenderDrawLine(renderer, i*ceil_size, 0, i*ceil_size, height); // Draw vertical lines with step cell_size
+}
+
+void Game::drawAliveCeils(SDL_Renderer *renderer, int width, int height, int ceil_size)
+{
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+
+    for (auto ceil : alive_ceils)
+    {
+        int r = ceil / COLS;
+        int c = ceil % COLS; 
+
+        SDL_Rect rect;
+        rect.x = c * ceil_size;
+        rect.y = r * ceil_size;
+        rect.w = ceil_size;
+        rect.h = ceil_size;
+
+        SDL_RenderFillRect(renderer, &rect);
+    }
+}
+
+void Game::draw()
+{
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+
+    drawField(renderer, width, height, ceil_size);
+    drawAliveCeils(renderer, width, height, ceil_size);
+
+    SDL_RenderPresent(renderer);
 }
 
 void Game::start()
@@ -109,94 +138,41 @@ void Game::start()
         SDL_RenderPresent(renderer);
         // end
 
-        SDL_Delay(100 / game_speed);
+        SDL_Delay(1000 / game_speed);
     }
-}
-
-std::vector<std::pair<int, int>> Game::getNeighborsPos(const std::pair<int, int> &pos)
-{
-    static auto inBound = [](int r, int c, int maxr, int maxc) -> bool{
-        return (unsigned int)r < maxr && (unsigned int)c < maxc; 
-    };
-
-    constexpr int MAX_NEIGHBOR_POS{2}, MIN_NEIGHBOR_POS{-1}; // max and mix indexes of square neighbors, they position located in cell.pos+-1 in row and col
-    std::vector<std::pair<int, int>> neighbors;
-    for(int i{MIN_NEIGHBOR_POS}; i < MAX_NEIGHBOR_POS; ++i)
-    {
-        for(int j{MIN_NEIGHBOR_POS}; j < MAX_NEIGHBOR_POS; ++j)
-        {
-            if( i == 0 && j == 0 ) // - pos of checked cell
-                continue;
-            int r{pos.first+i}, c{pos.second+j};
-            if( inBound(r, c, max_row_cell_pos, max_col_cell_pos) )
-                neighbors.push_back( {pos.first + i, pos.second + j} );
-        }
-    }
-
-    return neighbors;
-}
-
-bool Game::isAliveCell(const std::pair<size_t, size_t>& pos, const std::vector<std::pair<int, int>>& neighbors)
-{
-    int cntAliveNeighbors{0};
-    for(const auto& pos: neighbors)
-    {
-        if(cells[pos.first][pos.second].isAlive())
-            ++cntAliveNeighbors;
-    }
-
-    if(cntAliveNeighbors > 3 || cntAliveNeighbors < 2)
-        return false;
-
-    return true;
 }
 
 void Game::updateCellsStates()
 {
-    std::vector<std::pair<int, int>> neighborOfAliveCells;
-    for(auto it=alive_cells_pos.begin(); it != alive_cells_pos.end(); )
-    {
-        auto pos{ *it };
-        auto neighbors = getNeighborsPos(pos);
-        if( !isAliveCell(pos, neighbors) )
-        {
-            setCellState(pos, false);
-            it = alive_cells_pos.erase(it);
-        }
-        else
-            neighborOfAliveCells.insert(neighborOfAliveCells.end(), neighbors.begin(), neighbors.end());
-    }    
+    std::unordered_map<std::size_t, int> neighbor_counts;
 
-    for(const auto& pos: neighborOfAliveCells)
-        if( isAliveCell(pos, getNeighborsPos(pos)) )
-            addActiveCell(pos);
+    for (std::size_t cell : alive_ceils)
+    {
+        for (int offset : neighbor_offsets)
+        {
+            std::size_t neighbor = cell + offset;
+            ++neighbor_counts[neighbor];
+        }
+    }
+
+    std::unordered_set<std::size_t> next_gen;
+
+    for (const auto& [cell, count] : neighbor_counts)
+    {
+        if (count == 3 || (count == 2 && alive_ceils.count(cell)))
+            next_gen.insert(cell);
+    }
+
+    alive_ceils = std::move(next_gen);
 }
 
 void Game::changeCellState(int x, int y, bool alive)
 {
-    int r{ x / field.getCellSize() }, c{ y / field.getCellSize() };
+    int r{ y / ceil_size }, c{ x / ceil_size };
     if(alive)
-        addActiveCell({r, c});
+        alive_ceils.insert(r * COLS + c );
     else
-        delActiveCell({r, c});
-}
-
-void Game::setCellState(const std::pair<int, int> &pos, bool alive)
-{
-    cells[pos.first][pos.second].setAlive(alive);
-    cells[pos.first][pos.second].draw(renderer);
-}
-
-void Game::addActiveCell(const std::pair<int, int> &pos)
-{
-    setCellState(pos, true);
-    alive_cells_pos.push_back(pos);
-}
-
-void Game::delActiveCell(const std::pair<int, int> &pos)
-{
-    setCellState(pos, false);
-    alive_cells_pos.erase( std::remove(alive_cells_pos.begin(), alive_cells_pos.end(), pos), alive_cells_pos.end() );
+        alive_ceils.erase(r * COLS + c );
 }
 
 Game::~Game()
